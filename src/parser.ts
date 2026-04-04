@@ -14,6 +14,11 @@ export type ParsedLogResponse = {
     deaths: number;
     assists: number;
     flashAssists: number;
+    damage: number;
+    headDamage: number;
+    headshotKills: number;
+    adr: number;
+    headshotPercentage: number;
   }[];
   rounds: RoundSummary[];
 };
@@ -41,6 +46,9 @@ export type RoundSummary = {
     deaths: number;
     assists: number;
     flashAssists: number;
+    damage: number;
+    headDamage: number;
+    headshotKills: number;
   }[];
 };
 
@@ -241,6 +249,32 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
     }
 
     if (isRoundLive) {
+      const attackEvent = extractAttackEvent(message);
+      if (attackEvent) {
+        if (
+          !isTrackablePlayer(attackEvent.attacker) ||
+          !isTrackablePlayer(attackEvent.victim)
+        ) {
+          continue;
+        }
+
+        const attackerRecord = upsertPlayer(players, attackEvent.attacker);
+        const attackerRoundRecord = upsertRoundPlayer(
+          currentRound,
+          attackEvent.attacker,
+        );
+
+        attackerRecord.damage += attackEvent.damage;
+        attackerRoundRecord.damage += attackEvent.damage;
+
+        if (attackEvent.hitgroup === "head" && attackEvent.damage > 0) {
+          attackerRecord.headDamage += attackEvent.damage;
+          attackerRoundRecord.headDamage += attackEvent.damage;
+        }
+
+        continue;
+      }
+
       const killEvent = extractKillEvent(message);
       if (killEvent) {
         if (
@@ -264,6 +298,11 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
         victimRecord.deaths += 1;
         killerRoundRecord.kills += 1;
         victimRoundRecord.deaths += 1;
+
+        if (killEvent.isHeadshot) {
+          killerRecord.headshotKills += 1;
+          killerRoundRecord.headshotKills += 1;
+        }
         continue;
       }
 
@@ -306,9 +345,18 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
     finalizeRound(currentRound, rounds, teamOrganizations, null, false);
   }
 
+  const completedRoundsCount = rounds.filter(
+    (round) => round.isComplete,
+  ).length;
+
   const finalizedPlayers = [...players.values()].map((player) => ({
     ...player,
     organization: resolveOrganizationForSide(player.side, teamOrganizations),
+    adr: calculateAdr(player.damage, completedRoundsCount),
+    headshotPercentage: calculateHeadshotPercentage(
+      player.headshotKills,
+      player.kills,
+    ),
   }));
 
   return {
@@ -361,6 +409,7 @@ function parseLineIntoParts(line: string): ParsedParts | null {
     return null;
   }
 
+  // Since the data is in a stable format we can index safely(99% safe lol) here
   const month = Number.parseInt(datePieces[0], 10);
   const day = Number.parseInt(datePieces[1], 10);
   const year = Number.parseInt(datePieces[2], 10);
@@ -585,6 +634,9 @@ type PlayerRecord = {
   deaths: number;
   assists: number;
   flashAssists: number;
+  damage: number;
+  headDamage: number;
+  headshotKills: number;
 };
 
 type RoundPlayerRecord = {
@@ -595,6 +647,9 @@ type RoundPlayerRecord = {
   deaths: number;
   assists: number;
   flashAssists: number;
+  damage: number;
+  headDamage: number;
+  headshotKills: number;
 };
 
 type RoundRecord = {
@@ -650,6 +705,9 @@ function upsertPlayer(
     deaths: 0,
     assists: 0,
     flashAssists: 0,
+    damage: 0,
+    headDamage: 0,
+    headshotKills: 0,
   };
 
   players.set(player.key, created);
@@ -730,6 +788,9 @@ function seedRoundPlayers(
       deaths: 0,
       assists: 0,
       flashAssists: 0,
+      damage: 0,
+      headDamage: 0,
+      headshotKills: 0,
     });
   }
 }
@@ -762,6 +823,9 @@ function upsertRoundPlayer(
     deaths: 0,
     assists: 0,
     flashAssists: 0,
+    damage: 0,
+    headDamage: 0,
+    headshotKills: 0,
   };
 
   round.players.set(player.key, created);
@@ -1049,7 +1113,7 @@ function extractTeamSwitch(
 
 function extractKillEvent(
   message: string,
-): { killer: PlayerRef; victim: PlayerRef } | null {
+): { killer: PlayerRef; victim: PlayerRef; isHeadshot: boolean } | null {
   const killerMatch = extractPlayerTokenAtStart(message);
 
   if (!killerMatch) {
@@ -1079,6 +1143,53 @@ function extractKillEvent(
   return {
     killer: killerMatch.player,
     victim: victimMatch.player,
+    isHeadshot: message.includes("(headshot)"),
+  };
+}
+
+function extractAttackEvent(message: string): {
+  attacker: PlayerRef;
+  victim: PlayerRef;
+  damage: number;
+  hitgroup: string | null;
+} | null {
+  const attackerMatch = extractPlayerTokenAtStart(message);
+
+  if (!attackerMatch) {
+    return null;
+  }
+
+  const attackMarker = " attacked ";
+  const attackIndex = message.indexOf(attackMarker, attackerMatch.endIndex);
+
+  if (attackIndex === -1) {
+    return null;
+  }
+
+  if (message.startsWith('other "', attackIndex + attackMarker.length)) {
+    return null;
+  }
+
+  const victimMatch = extractNextPlayerToken(
+    message,
+    attackIndex + attackMarker.length,
+  );
+
+  if (!victimMatch) {
+    return null;
+  }
+
+  const damage = extractQuotedNumber(message, "(damage ");
+
+  if (damage === null) {
+    return null;
+  }
+
+  return {
+    attacker: attackerMatch.player,
+    victim: victimMatch.player,
+    damage,
+    hitgroup: extractQuotedValue(message, "(hitgroup "),
   };
 }
 
@@ -1122,4 +1233,34 @@ function extractAssistEvent(
     victim: victimMatch.player,
     isFlashAssist,
   };
+}
+
+function extractQuotedNumber(text: string, marker: string): number | null {
+  const value = extractQuotedValue(text, marker);
+
+  if (value === null) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function calculateAdr(damage: number, roundsPlayed: number): number {
+  if (roundsPlayed <= 0) {
+    return 0;
+  }
+
+  return Number((damage / roundsPlayed).toFixed(2));
+}
+
+function calculateHeadshotPercentage(
+  headshotKills: number,
+  kills: number,
+): number {
+  if (kills <= 0) {
+    return 0;
+  }
+
+  return Number(((headshotKills / kills) * 100).toFixed(2));
 }
