@@ -1,5 +1,10 @@
 export type ParsedLogResponse = {
   mapName: string | null;
+  isComplete: boolean;
+  finalScore: RoundScore | null;
+  durationMinutes: number | null;
+  winningSide: Side | null;
+  winningOrganization: string | null;
   roster: {
     organization: string | null;
     id: string;
@@ -67,6 +72,10 @@ export type RoundScore = {
 
 export function parseMatchLog(log: string): ParsedLogResponse | null {
   let mapName: string | null = null;
+  let isComplete = false;
+  let finalScore: RoundScore | null = null;
+  let durationMinutes: number | null = null;
+  let winningSide: Side | null = null;
   let hasLiveMatchStarted = false;
   let isRoundLive = false;
   let latestRoundsPlayed: number | null = null;
@@ -88,9 +97,16 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
 
     const { message } = parsedLine;
 
-    const detectedMapName = extractMapName(message);
-    if (detectedMapName) {
-      mapName = detectedMapName;
+    const gameOver = extractGameOver(message);
+    if (gameOver) {
+      mapName = gameOver.mapName;
+      isComplete = true;
+      finalScore = gameOver.score;
+      durationMinutes = gameOver.durationMinutes;
+      winningSide = determineWinningSide(gameOver.score);
+      currentRound = null;
+      isRoundLive = false;
+      break;
     }
 
     const roundsPlayed = extractRoundsPlayed(message);
@@ -297,6 +313,14 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
 
   return {
     mapName: mapName,
+    isComplete,
+    finalScore,
+    durationMinutes,
+    winningSide,
+    winningOrganization: resolveOrganizationForSide(
+      winningSide,
+      teamOrganizations,
+    ),
     roster: finalizedPlayers,
     rounds: rounds.map(finalizeRoundRecord),
   };
@@ -382,19 +406,70 @@ function extractQuotedValue(text: string, marker: string): string | null {
   return text.slice(quoteIndex + 1, closingQuoteIndex);
 }
 
-function extractMapName(message: string): string | null {
-  if (message.includes('World triggered "Match_Start" on "')) {
-    return extractQuotedValue(message, 'World triggered "Match_Start" on ');
+function extractGameOver(
+  message: string,
+): { mapName: string; score: RoundScore; durationMinutes: number } | null {
+  const prefix = "Game Over: competitive ";
+
+  if (!message.startsWith(prefix)) {
+    return null;
   }
+
+  const details = message.slice(prefix.length);
+  const segments = details.split(" ");
+
+  if (segments.length !== 7) {
+    return null;
+  }
+
+  const [
+    matchId,
+    mapName,
+    scoreLabel,
+    scoreValue,
+    afterLabel,
+    durationValue,
+    durationUnit,
+  ] = segments;
 
   if (
-    message.includes("MatchStatus: Score: ") &&
-    message.includes(' on map "')
+    !matchId ||
+    !mapName ||
+    scoreLabel !== "score" ||
+    !scoreValue ||
+    afterLabel !== "after" ||
+    !durationValue ||
+    durationUnit !== "min"
   ) {
-    return extractQuotedValue(message, " on map ");
+    return null;
   }
 
-  return null;
+  const scoreSeparatorIndex = scoreValue.indexOf(":");
+
+  if (scoreSeparatorIndex === -1) {
+    return null;
+  }
+
+  const ctScore = Number.parseInt(scoreValue.slice(0, scoreSeparatorIndex), 10);
+  const tScore = Number.parseInt(scoreValue.slice(scoreSeparatorIndex + 1), 10);
+  const durationMinutes = Number.parseInt(durationValue, 10);
+
+  if (
+    Number.isNaN(ctScore) ||
+    Number.isNaN(tScore) ||
+    Number.isNaN(durationMinutes)
+  ) {
+    return null;
+  }
+
+  return {
+    mapName,
+    score: {
+      CT: ctScore,
+      T: tScore,
+    },
+    durationMinutes,
+  };
 }
 
 function extractRoundsPlayed(message: string): number | null {
@@ -414,14 +489,28 @@ function extractRoundsPlayed(message: string): number | null {
 }
 
 function extractScore(message: string): RoundScore | null {
-  const match = message.match(/MatchStatus: Score: (\d+):(\d+) on map /);
+  const prefix = "MatchStatus: Score: ";
+  const suffix = " on map ";
 
-  if (!match) {
+  if (!message.startsWith(prefix)) {
     return null;
   }
 
-  const ctScore = Number.parseInt(match[1], 10);
-  const tScore = Number.parseInt(match[2], 10);
+  const suffixIndex = message.indexOf(suffix, prefix.length);
+
+  if (suffixIndex === -1) {
+    return null;
+  }
+
+  const scoreValue = message.slice(prefix.length, suffixIndex).trim();
+  const scoreSeparatorIndex = scoreValue.indexOf(":");
+
+  if (scoreSeparatorIndex === -1) {
+    return null;
+  }
+
+  const ctScore = Number.parseInt(scoreValue.slice(0, scoreSeparatorIndex), 10);
+  const tScore = Number.parseInt(scoreValue.slice(scoreSeparatorIndex + 1), 10);
 
   if (Number.isNaN(ctScore) || Number.isNaN(tScore)) {
     return null;
@@ -431,6 +520,14 @@ function extractScore(message: string): RoundScore | null {
     CT: ctScore,
     T: tScore,
   };
+}
+
+function determineWinningSide(score: RoundScore): Side | null {
+  if (score.CT === score.T) {
+    return null;
+  }
+
+  return score.CT > score.T ? "CT" : "T";
 }
 
 function isRoundStart(message: string): boolean {
