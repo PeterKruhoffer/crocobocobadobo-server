@@ -19,6 +19,8 @@ export type ParsedLogResponse = {
     headshotKills: number;
     adr: number;
     headshotPercentage: number;
+    utilityBought: UtilityStats;
+    utilityThrown: UtilityStats;
   }[];
   rounds: RoundSummary[];
 };
@@ -49,7 +51,17 @@ export type RoundSummary = {
     damage: number;
     headDamage: number;
     headshotKills: number;
+    utilityBought: UtilityStats;
+    utilityThrown: UtilityStats;
   }[];
+};
+
+export type UtilityStats = {
+  flashbang: number;
+  molotov: number;
+  incgrenade: number;
+  smokegrenade: number;
+  hegrenade: number;
 };
 
 export type RoundWinReason =
@@ -91,6 +103,10 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
   const players = new Map<string, PlayerRecord>();
   const rounds: RoundRecord[] = [];
   const teamOrganizations: TeamOrganizations = { CT: null, T: null };
+  const pendingUtilityPurchases = new Map<
+    string,
+    PendingUtilityPurchaseRecord
+  >();
 
   const lines = log
     .split(/\r?\n/)
@@ -231,6 +247,44 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
         parsedLine.timeStamp,
       );
       seedRoundPlayers(currentRound, players);
+      applyPendingUtilityPurchases(
+        currentRound,
+        players,
+        pendingUtilityPurchases,
+      );
+
+      continue;
+    }
+
+    const utilityPurchaseEvent = extractUtilityPurchaseEvent(message);
+    if (
+      utilityPurchaseEvent &&
+      isTrackablePlayer(utilityPurchaseEvent.player)
+    ) {
+      const playerRecord = upsertPlayer(players, utilityPurchaseEvent.player);
+
+      incrementUtilityStat(
+        playerRecord.utilityBought,
+        utilityPurchaseEvent.utility,
+      );
+
+      if (currentRound) {
+        const playerRoundRecord = upsertRoundPlayer(
+          currentRound,
+          utilityPurchaseEvent.player,
+        );
+
+        incrementUtilityStat(
+          playerRoundRecord.utilityBought,
+          utilityPurchaseEvent.utility,
+        );
+      } else if (hasLiveMatchStarted) {
+        bufferPendingUtilityPurchase(
+          pendingUtilityPurchases,
+          utilityPurchaseEvent.player,
+          utilityPurchaseEvent.utility,
+        );
+      }
 
       continue;
     }
@@ -272,6 +326,25 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
           attackerRoundRecord.headDamage += attackEvent.damage;
         }
 
+        continue;
+      }
+
+      const utilityThrowEvent = extractUtilityThrowEvent(message);
+      if (utilityThrowEvent && isTrackablePlayer(utilityThrowEvent.player)) {
+        const playerRecord = upsertPlayer(players, utilityThrowEvent.player);
+        const playerRoundRecord = upsertRoundPlayer(
+          currentRound,
+          utilityThrowEvent.player,
+        );
+
+        incrementUtilityStat(
+          playerRecord.utilityThrown,
+          utilityThrowEvent.utility,
+        );
+        incrementUtilityStat(
+          playerRoundRecord.utilityThrown,
+          utilityThrowEvent.utility,
+        );
         continue;
       }
 
@@ -637,6 +710,8 @@ type PlayerRecord = {
   damage: number;
   headDamage: number;
   headshotKills: number;
+  utilityBought: UtilityStats;
+  utilityThrown: UtilityStats;
 };
 
 type RoundPlayerRecord = {
@@ -650,6 +725,20 @@ type RoundPlayerRecord = {
   damage: number;
   headDamage: number;
   headshotKills: number;
+  utilityBought: UtilityStats;
+  utilityThrown: UtilityStats;
+};
+
+type UtilityName =
+  | "flashbang"
+  | "molotov"
+  | "incgrenade"
+  | "smokegrenade"
+  | "hegrenade";
+
+type PendingUtilityPurchaseRecord = {
+  player: PlayerRef;
+  utilityBought: UtilityStats;
 };
 
 type RoundRecord = {
@@ -708,6 +797,8 @@ function upsertPlayer(
     damage: 0,
     headDamage: 0,
     headshotKills: 0,
+    utilityBought: createEmptyUtilityStats(),
+    utilityThrown: createEmptyUtilityStats(),
   };
 
   players.set(player.key, created);
@@ -791,6 +882,8 @@ function seedRoundPlayers(
       damage: 0,
       headDamage: 0,
       headshotKills: 0,
+      utilityBought: createEmptyUtilityStats(),
+      utilityThrown: createEmptyUtilityStats(),
     });
   }
 }
@@ -826,6 +919,8 @@ function upsertRoundPlayer(
     damage: 0,
     headDamage: 0,
     headshotKills: 0,
+    utilityBought: createEmptyUtilityStats(),
+    utilityThrown: createEmptyUtilityStats(),
   };
 
   round.players.set(player.key, created);
@@ -1235,6 +1330,81 @@ function extractAssistEvent(
   };
 }
 
+function extractUtilityPurchaseEvent(
+  message: string,
+): { player: PlayerRef; utility: UtilityName } | null {
+  const playerMatch = extractPlayerTokenAtStart(message);
+
+  if (!playerMatch) {
+    return null;
+  }
+
+  const purchased = extractQuotedValue(message, " purchased ");
+  const utility = purchased
+    ? convertStringPurchaseToUtilityName(purchased)
+    : null;
+
+  if (!utility) {
+    return null;
+  }
+
+  return {
+    player: playerMatch.player,
+    utility,
+  };
+}
+
+function convertStringPurchaseToUtilityName(
+  purchase: string,
+): UtilityName | null {
+  switch (purchase) {
+    case "flashbang":
+    case "molotov":
+    case "hegrenade":
+    case "smokegrenade":
+    case "incgrenade":
+      return purchase;
+    default:
+      return null;
+  }
+}
+
+function extractUtilityThrowEvent(
+  message: string,
+): { player: PlayerRef; utility: UtilityName } | null {
+  const playerMatch = extractPlayerTokenAtStart(message);
+
+  if (!playerMatch) {
+    return null;
+  }
+
+  const throwMarker = " threw ";
+  const throwIndex = message.indexOf(throwMarker, playerMatch.endIndex);
+
+  if (throwIndex === -1) {
+    return null;
+  }
+
+  const utilityEndIndex = message.indexOf(" ", throwIndex + throwMarker.length);
+  const utilityToken =
+    utilityEndIndex === -1
+      ? message.slice(throwIndex + throwMarker.length)
+      : message.slice(throwIndex + throwMarker.length, utilityEndIndex);
+  const utility = normalizeThrownUtilityName(
+    utilityToken,
+    playerMatch.player.side,
+  );
+
+  if (!utility) {
+    return null;
+  }
+
+  return {
+    player: playerMatch.player,
+    utility,
+  };
+}
+
 function extractQuotedNumber(text: string, marker: string): number | null {
   const value = extractQuotedValue(text, marker);
 
@@ -1263,4 +1433,86 @@ function calculateHeadshotPercentage(
   }
 
   return Number(((headshotKills / kills) * 100).toFixed(2));
+}
+
+function createEmptyUtilityStats(): UtilityStats {
+  return {
+    flashbang: 0,
+    molotov: 0,
+    incgrenade: 0,
+    smokegrenade: 0,
+    hegrenade: 0,
+  };
+}
+
+function incrementUtilityStat(stats: UtilityStats, utility: UtilityName): void {
+  stats[utility] += 1;
+}
+
+function normalizeThrownUtilityName(
+  utility: string,
+  side: Side | null,
+): UtilityName | null {
+  if (utility === "molotov" && side === "CT") {
+    return "incgrenade";
+  }
+
+  return convertStringPurchaseToUtilityName(utility);
+}
+
+function bufferPendingUtilityPurchase(
+  pendingPurchases: Map<string, PendingUtilityPurchaseRecord>,
+  player: PlayerRef,
+  utility: UtilityName,
+): void {
+  const existing = pendingPurchases.get(player.key);
+
+  if (existing) {
+    existing.player.name = player.name;
+
+    if (player.side) {
+      existing.player.side = player.side;
+    }
+
+    incrementUtilityStat(existing.utilityBought, utility);
+    return;
+  }
+
+  const created: PendingUtilityPurchaseRecord = {
+    player: {
+      key: player.key,
+      name: player.name,
+      side: player.side,
+    },
+    utilityBought: createEmptyUtilityStats(),
+  };
+
+  incrementUtilityStat(created.utilityBought, utility);
+  pendingPurchases.set(player.key, created);
+}
+
+function applyPendingUtilityPurchases(
+  round: RoundRecord,
+  players: Map<string, PlayerRecord>,
+  pendingPurchases: Map<string, PendingUtilityPurchaseRecord>,
+): void {
+  for (const pendingPurchase of pendingPurchases.values()) {
+    const playerRecord = upsertPlayer(players, pendingPurchase.player);
+    const roundPlayerRecord = upsertRoundPlayer(round, pendingPurchase.player);
+
+    roundPlayerRecord.name = playerRecord.name;
+
+    if (playerRecord.side) {
+      roundPlayerRecord.side = playerRecord.side;
+    }
+
+    for (const utility of Object.keys(
+      pendingPurchase.utilityBought,
+    ) as UtilityName[]) {
+      roundPlayerRecord.utilityBought[utility] +=
+        pendingPurchase.utilityBought[utility];
+    }
+  }
+
+  pendingPurchases.clear();
 }
