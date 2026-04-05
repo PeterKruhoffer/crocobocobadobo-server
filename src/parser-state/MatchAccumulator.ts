@@ -1,30 +1,17 @@
 import type { PlayerRef, Side, UtilityName } from "../parser-core";
-import type { RoundScore, RoundWinReason } from "../parser-events";
+import type {
+  RoundScore,
+  RoundWinReason,
+} from "../parser-events";
 import type {
   BombSite,
-  DerivedRoundWinReason,
   ParsedLogResponse,
-  RoundPlayerIdentity,
   RoundSummary,
   UtilityStats,
 } from "../parser-types";
+import { RoundAccumulator } from "./RoundAccumulator";
 
 type PlayerRecord = {
-  id: string;
-  name: string;
-  side: Side | null;
-  kills: number;
-  deaths: number;
-  assists: number;
-  flashAssists: number;
-  damage: number;
-  headDamage: number;
-  headshotKills: number;
-  utilityBought: UtilityStats;
-  utilityThrown: UtilityStats;
-};
-
-type RoundPlayerRecord = {
   id: string;
   name: string;
   side: Side | null;
@@ -44,24 +31,6 @@ type PendingUtilityPurchaseRecord = {
   utilityBought: UtilityStats;
 };
 
-type RoundRecord = {
-  number: number;
-  startedAt: string | null;
-  endedAt: string | null;
-  isComplete: boolean;
-  winningOrganization: string | null;
-  winningSide: Side | null;
-  winReason: RoundWinReason | null;
-  derivedWinReason: DerivedRoundWinReason | null;
-  score: RoundScore | null;
-  bombPlanted: boolean;
-  bombDefused: boolean;
-  bombSite: BombSite | null;
-  bombPlantedBy: RoundPlayerIdentity | null;
-  bombDefusedBy: RoundPlayerIdentity | null;
-  players: Map<string, RoundPlayerRecord>;
-};
-
 type TeamOrganizations = {
   CT: string | null;
   T: string | null;
@@ -76,9 +45,9 @@ export class MatchAccumulator {
   private hasLiveMatchStarted = false;
   private roundLive = false;
   private latestRoundsPlayed: number | null = null;
-  private currentRound: RoundRecord | null = null;
+  private currentRound: RoundAccumulator | null = null;
   private readonly players = new Map<string, PlayerRecord>();
-  private readonly rounds: RoundRecord[] = [];
+  private readonly rounds: RoundSummary[] = [];
   private readonly teamOrganizations: TeamOrganizations = { CT: null, T: null };
   private readonly pendingUtilityPurchases = new Map<
     string,
@@ -112,9 +81,7 @@ export class MatchAccumulator {
   }
 
   applyScore(score: RoundScore): void {
-    if (this.currentRound) {
-      this.currentRound.score = score;
-    }
+    this.currentRound?.recordScore(score);
   }
 
   handleRoundEnd(endedAt: string): void {
@@ -133,20 +100,19 @@ export class MatchAccumulator {
       return false;
     }
 
-    this.currentRound.winningSide = roundOutcome.winningSide;
-    this.currentRound.winReason = roundOutcome.reason;
+    this.currentRound.recordOutcome(roundOutcome);
     return true;
   }
 
-  applyBombPlant(event: { player: PlayerRef; site: BombSite | null }): boolean {
+  applyBombPlant(event: {
+    player: PlayerRef;
+    site: BombSite | null;
+  }): boolean {
     if (!this.currentRound || !isTrackablePlayer(event.player)) {
       return false;
     }
 
-    this.currentRound.bombPlanted = true;
-    this.currentRound.bombSite = event.site;
-    this.currentRound.bombPlantedBy = toRoundPlayerIdentity(event.player);
-    upsertRoundPlayer(this.currentRound, event.player);
+    this.currentRound.recordBombPlant(event);
     return true;
   }
 
@@ -155,9 +121,7 @@ export class MatchAccumulator {
       return false;
     }
 
-    this.currentRound.bombDefused = true;
-    this.currentRound.bombDefusedBy = toRoundPlayerIdentity(event.player);
-    upsertRoundPlayer(this.currentRound, event.player);
+    this.currentRound.recordBombDefuse(event);
     return true;
   }
 
@@ -172,22 +136,16 @@ export class MatchAccumulator {
     }
 
     if (this.currentRound) {
-      finalizeRound(
-        this.currentRound,
-        this.rounds,
-        this.teamOrganizations,
-        startedAt,
-        false,
-      );
+      this.rounds.push(this.finalizeCurrentRound(startedAt, false));
     }
 
-    this.currentRound = createRoundRecord(
+    this.currentRound = new RoundAccumulator(
       this.latestRoundsPlayed !== null
         ? this.latestRoundsPlayed + 1
         : this.rounds.length + 1,
       startedAt,
     );
-    seedRoundPlayers(this.currentRound, this.players);
+    this.currentRound.seedPlayers(this.players.values());
     applyPendingUtilityPurchases(
       this.currentRound,
       this.players,
@@ -203,15 +161,15 @@ export class MatchAccumulator {
       return false;
     }
 
+    if (!this.currentRound && !this.hasLiveMatchStarted) {
+      return true;
+    }
+
     const playerRecord = upsertPlayer(this.players, event.player);
     incrementUtilityStat(playerRecord.utilityBought, event.utility);
 
     if (this.currentRound) {
-      const playerRoundRecord = upsertRoundPlayer(
-        this.currentRound,
-        event.player,
-      );
-      incrementUtilityStat(playerRoundRecord.utilityBought, event.utility);
+      this.currentRound.recordUtilityPurchase(event.player, event.utility);
     } else if (this.hasLiveMatchStarted) {
       bufferPendingUtilityPurchase(
         this.pendingUtilityPurchases,
@@ -239,6 +197,7 @@ export class MatchAccumulator {
     hitgroup: string | null;
   }): boolean {
     if (
+      !this.currentRound ||
       !isTrackablePlayer(event.attacker) ||
       !isTrackablePlayer(event.victim)
     ) {
@@ -246,19 +205,17 @@ export class MatchAccumulator {
     }
 
     const attackerRecord = upsertPlayer(this.players, event.attacker);
-    const attackerRoundRecord = upsertRoundPlayer(
-      this.currentRound,
-      event.attacker,
-    );
-
     attackerRecord.damage += event.damage;
-    attackerRoundRecord.damage += event.damage;
 
     if (event.hitgroup === "head" && event.damage > 0) {
       attackerRecord.headDamage += event.damage;
-      attackerRoundRecord.headDamage += event.damage;
     }
 
+    this.currentRound.recordAttack({
+      attacker: event.attacker,
+      damage: event.damage,
+      hitgroup: event.hitgroup,
+    });
     return true;
   }
 
@@ -266,18 +223,13 @@ export class MatchAccumulator {
     player: PlayerRef;
     utility: UtilityName;
   }): boolean {
-    if (!isTrackablePlayer(event.player)) {
+    if (!this.currentRound || !isTrackablePlayer(event.player)) {
       return false;
     }
 
     const playerRecord = upsertPlayer(this.players, event.player);
-    const playerRoundRecord = upsertRoundPlayer(
-      this.currentRound,
-      event.player,
-    );
-
     incrementUtilityStat(playerRecord.utilityThrown, event.utility);
-    incrementUtilityStat(playerRoundRecord.utilityThrown, event.utility);
+    this.currentRound.recordUtilityThrow(event.player, event.utility);
     return true;
   }
 
@@ -286,31 +238,24 @@ export class MatchAccumulator {
     victim: PlayerRef;
     isHeadshot: boolean;
   }): boolean {
-    if (!isTrackablePlayer(event.killer) || !isTrackablePlayer(event.victim)) {
+    if (
+      !this.currentRound ||
+      !isTrackablePlayer(event.killer) ||
+      !isTrackablePlayer(event.victim)
+    ) {
       return false;
     }
 
     const killerRecord = upsertPlayer(this.players, event.killer);
     const victimRecord = upsertPlayer(this.players, event.victim);
-    const killerRoundRecord = upsertRoundPlayer(
-      this.currentRound,
-      event.killer,
-    );
-    const victimRoundRecord = upsertRoundPlayer(
-      this.currentRound,
-      event.victim,
-    );
-
     killerRecord.kills += 1;
     victimRecord.deaths += 1;
-    killerRoundRecord.kills += 1;
-    victimRoundRecord.deaths += 1;
 
     if (event.isHeadshot) {
       killerRecord.headshotKills += 1;
-      killerRoundRecord.headshotKills += 1;
     }
 
+    this.currentRound.recordKill(event);
     return true;
   }
 
@@ -320,6 +265,7 @@ export class MatchAccumulator {
     isFlashAssist: boolean;
   }): boolean {
     if (
+      !this.currentRound ||
       !isTrackablePlayer(event.assister) ||
       !isTrackablePlayer(event.victim)
     ) {
@@ -336,32 +282,22 @@ export class MatchAccumulator {
     }
 
     const assisterRecord = upsertPlayer(this.players, event.assister);
-    const assisterRoundRecord = upsertRoundPlayer(
-      this.currentRound,
-      event.assister,
-    );
-
     assisterRecord.assists += 1;
-    assisterRoundRecord.assists += 1;
 
     if (event.isFlashAssist) {
       assisterRecord.flashAssists += 1;
-      assisterRoundRecord.flashAssists += 1;
     }
 
+    this.currentRound.recordAssist({
+      assister: event.assister,
+      isFlashAssist: event.isFlashAssist,
+    });
     return true;
   }
 
   finish(): ParsedLogResponse {
     if (this.currentRound) {
-      finalizeRound(
-        this.currentRound,
-        this.rounds,
-        this.teamOrganizations,
-        null,
-        false,
-      );
-      this.currentRound = null;
+      this.rounds.push(this.finalizeCurrentRound(null, false));
     }
 
     const completedRoundsCount = this.rounds.filter(
@@ -370,10 +306,7 @@ export class MatchAccumulator {
 
     const finalizedPlayers = [...this.players.values()].map((player) => ({
       ...player,
-      organization: resolveOrganizationForSide(
-        player.side,
-        this.teamOrganizations,
-      ),
+      organization: resolveOrganizationForSide(player.side, this.teamOrganizations),
       adr: calculateAdr(player.damage, completedRoundsCount),
       headshotPercentage: calculateHeadshotPercentage(
         player.headshotKills,
@@ -392,25 +325,38 @@ export class MatchAccumulator {
         this.teamOrganizations,
       ),
       roster: finalizedPlayers,
-      rounds: this.rounds.map(finalizeRoundRecord),
+      rounds: this.rounds,
     };
   }
 
   private closeCurrentRound(endedAt: string, isComplete: boolean): void {
     if (this.currentRound) {
-      finalizeRound(
-        this.currentRound,
-        this.rounds,
-        this.teamOrganizations,
-        endedAt,
-        isComplete,
-      );
-      this.currentRound = null;
+      this.rounds.push(this.finalizeCurrentRound(endedAt, isComplete));
     }
 
     // Restart markers show up around the transition from setup to live play,
     // so they should always close the current counting window.
     this.roundLive = false;
+  }
+
+  private finalizeCurrentRound(
+    endedAt: string | null,
+    isComplete: boolean,
+  ): RoundSummary {
+    if (!this.currentRound) {
+      throw new Error("Cannot finalize a round when no round is active");
+    }
+
+    const finalizedRound = this.currentRound.finalize(
+      endedAt,
+      isComplete,
+      resolveOrganizationForSide(
+        this.currentRound.getWinningSide(),
+        this.teamOrganizations,
+      ),
+    );
+    this.currentRound = null;
+    return finalizedRound;
   }
 }
 
@@ -457,197 +403,8 @@ function upsertPlayer(
   return created;
 }
 
-function createRoundRecord(number: number, startedAt: string): RoundRecord {
-  return {
-    number,
-    startedAt,
-    endedAt: null,
-    isComplete: false,
-    winningOrganization: null,
-    winningSide: null,
-    winReason: null,
-    derivedWinReason: null,
-    score: null,
-    bombPlanted: false,
-    bombDefused: false,
-    bombSite: null,
-    bombPlantedBy: null,
-    bombDefusedBy: null,
-    players: new Map<string, RoundPlayerRecord>(),
-  };
-}
-
-function finalizeRound(
-  round: RoundRecord,
-  rounds: RoundRecord[],
-  teamOrganizations: TeamOrganizations,
-  endedAt: string | null,
-  isComplete: boolean,
-): void {
-  round.endedAt = endedAt;
-  round.isComplete = isComplete;
-  round.winningOrganization = resolveOrganizationForSide(
-    round.winningSide,
-    teamOrganizations,
-  );
-  round.derivedWinReason = deriveRoundWinReason(round);
-  rounds.push(round);
-}
-
-function finalizeRoundRecord(round: RoundRecord): RoundSummary {
-  return {
-    number: round.number,
-    startedAt: round.startedAt,
-    endedAt: round.endedAt,
-    isComplete: round.isComplete,
-    winningOrganization: round.winningOrganization,
-    winningSide: round.winningSide,
-    winReason: round.winReason,
-    derivedWinReason: round.derivedWinReason,
-    score: round.score,
-    bombPlanted: round.bombPlanted,
-    bombDefused: round.bombDefused,
-    bombSite: round.bombSite,
-    bombPlantedBy: round.bombPlantedBy,
-    bombDefusedBy: round.bombDefusedBy,
-    players: [...round.players.values()],
-  };
-}
-
-function seedRoundPlayers(
-  round: RoundRecord,
-  players: Map<string, PlayerRecord>,
-): void {
-  for (const player of players.values()) {
-    if (!player.side) {
-      continue;
-    }
-
-    round.players.set(player.id, {
-      id: player.id,
-      name: player.name,
-      side: player.side,
-      kills: 0,
-      deaths: 0,
-      assists: 0,
-      flashAssists: 0,
-      damage: 0,
-      headDamage: 0,
-      headshotKills: 0,
-      utilityBought: createEmptyUtilityStats(),
-      utilityThrown: createEmptyUtilityStats(),
-    });
-  }
-}
-
-function upsertRoundPlayer(
-  round: RoundRecord | null,
-  player: PlayerRef,
-): RoundPlayerRecord {
-  if (!round) {
-    throw new Error("Cannot track round stats without an active round");
-  }
-
-  const existing = round.players.get(player.key);
-
-  if (existing) {
-    existing.name = player.name;
-
-    if (player.side) {
-      existing.side = player.side;
-    }
-
-    return existing;
-  }
-
-  const created: RoundPlayerRecord = {
-    id: player.key,
-    name: player.name,
-    side: player.side,
-    kills: 0,
-    deaths: 0,
-    assists: 0,
-    flashAssists: 0,
-    damage: 0,
-    headDamage: 0,
-    headshotKills: 0,
-    utilityBought: createEmptyUtilityStats(),
-    utilityThrown: createEmptyUtilityStats(),
-  };
-
-  round.players.set(player.key, created);
-  return created;
-}
-
 function isTrackablePlayer(player: PlayerRef): boolean {
   return player.side !== null;
-}
-
-function toRoundPlayerIdentity(player: PlayerRef): RoundPlayerIdentity {
-  return {
-    id: player.key,
-    name: player.name,
-    side: player.side,
-  };
-}
-
-function deriveRoundWinReason(
-  round: RoundRecord,
-): DerivedRoundWinReason | null {
-  if (round.winReason === "bomb_defused") {
-    return "bomb_defused";
-  }
-
-  if (round.winReason === "bomb_exploded") {
-    return "bomb_exploded";
-  }
-
-  const ctDeaths = countDeathsForSide(round, "CT");
-  const tDeaths = countDeathsForSide(round, "T");
-  const ctPlayers = countPlayersForSide(round, "CT");
-  const tPlayers = countPlayersForSide(round, "T");
-  const allCtsDead = ctPlayers > 0 && ctDeaths >= ctPlayers;
-  const allTsDead = tPlayers > 0 && tDeaths >= tPlayers;
-
-  if (round.winReason === "cts_win") {
-    if (allTsDead) {
-      return "team_wipe";
-    }
-
-    if (!round.bombPlanted) {
-      return "time_ran_out";
-    }
-  }
-
-  if (round.winReason === "terrorists_win" && allCtsDead) {
-    return round.bombPlanted ? "post_plant_elimination" : "team_wipe";
-  }
-
-  return null;
-}
-
-function countPlayersForSide(round: RoundRecord, side: Side): number {
-  let count = 0;
-
-  for (const player of round.players.values()) {
-    if (player.side === side) {
-      count += 1;
-    }
-  }
-
-  return count;
-}
-
-function countDeathsForSide(round: RoundRecord, side: Side): number {
-  let count = 0;
-
-  for (const player of round.players.values()) {
-    if (player.side === side) {
-      count += player.deaths;
-    }
-  }
-
-  return count;
 }
 
 function resolveOrganizationForSide(
@@ -722,27 +479,22 @@ function bufferPendingUtilityPurchase(
 }
 
 function applyPendingUtilityPurchases(
-  round: RoundRecord,
+  round: RoundAccumulator,
   players: Map<string, PlayerRecord>,
   pendingPurchases: Map<string, PendingUtilityPurchaseRecord>,
 ): void {
   for (const pendingPurchase of pendingPurchases.values()) {
     const playerRecord = upsertPlayer(players, pendingPurchase.player);
-    const roundPlayerRecord = upsertRoundPlayer(round, pendingPurchase.player);
-
-    roundPlayerRecord.name = playerRecord.name;
-
-    if (playerRecord.side) {
-      roundPlayerRecord.side = playerRecord.side;
-    }
-
-    for (const utility of Object.keys(
-      pendingPurchase.utilityBought,
-    ) as UtilityName[]) {
-      roundPlayerRecord.utilityBought[utility] +=
-        pendingPurchase.utilityBought[utility];
-    }
+    round.applyPendingUtilityPurchase(toPlayerRef(playerRecord), pendingPurchase.utilityBought);
   }
 
   pendingPurchases.clear();
+}
+
+function toPlayerRef(player: PlayerRecord): PlayerRef {
+  return {
+    key: player.id,
+    name: player.name,
+    side: player.side,
+  };
 }
