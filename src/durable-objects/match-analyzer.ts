@@ -8,10 +8,10 @@ type StoredReportRow = {
 
 const REPORT_ROW_ID = 'latest'
 
-export class MatchAnalyzerDurableObject extends DurableObject {
+export class MatchAnalyzerDurableObject extends DurableObject<CloudflareBindings> {
   private readonly ready: Promise<void>
 
-  constructor(ctx: DurableObjectState, env: unknown) {
+  constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env)
 
     this.ready = this.ctx.blockConcurrencyWhile(async () => {

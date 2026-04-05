@@ -10,6 +10,9 @@ dependencies:
     version: 4.12.10
 
 devDependencies:
+  typescript:
+    specifier: ^6.0.2
+    version: 6.0.2
   wrangler:
     specifier: ^4.80.0
     version: 4.80.0
@@ -748,6 +751,12 @@ packages:
     requiresBuild: true
     dev: true
     optional: true
+
+  /typescript@6.0.2:
+    resolution: {integrity: sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+    dev: true
 
   /undici@7.24.4:
     resolution: {integrity: sha512-BM/JzwwaRXxrLdElV2Uo6cTLEjhSb3WXboncJamZ15NgUURmvlXvxa6xkwIOILIjPNo9i8ku136ZvWV0Uly8+w==}

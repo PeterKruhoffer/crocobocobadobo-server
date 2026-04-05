@@ -1,8 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { ParsedLogResponse, parseMatchLog } from "@/parser";
 
-export class MatchReviewerDO extends DurableObject {
-  constructor(ctx: DurableObjectState, env: Env) {
+export class MatchReviewerDO extends DurableObject<CloudflareBindings> {
+  constructor(ctx: DurableObjectState, env: CloudflareBindings) {
     super(ctx, env);
   }
 
