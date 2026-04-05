@@ -1,15 +1,20 @@
-import type { PlayerRef, Side, UtilityName } from "../parser-core";
-import type {
-  RoundScore,
-  RoundWinReason,
-} from "../parser-events";
+import type { PlayerRef, UtilityName } from "@/parser-core";
+import {
+  createEmptyUtilityStats,
+  deriveRoundWinReason,
+  incrementUtilityStat,
+} from "../parser-derived";
 import type {
   BombSite,
   DerivedRoundWinReason,
   RoundPlayerIdentity,
+  RoundScore,
   RoundSummary,
+  RoundWinReason,
+  Side,
   UtilityStats,
-} from "../parser-types";
+} from "@/parser-types";
+import { upsertPlayerRecord } from "./player-records";
 
 type RoundPlayerRecord = {
   id: string;
@@ -91,10 +96,7 @@ export class RoundAccumulator {
     this.winReason = outcome.reason;
   }
 
-  recordBombPlant(event: {
-    player: PlayerRef;
-    site: BombSite | null;
-  }): void {
+  recordBombPlant(event: { player: PlayerRef; site: BombSite | null }): void {
     this.bombPlanted = true;
     this.bombSite = event.site;
     this.bombPlantedBy = toRoundPlayerIdentity(event.player);
@@ -111,7 +113,10 @@ export class RoundAccumulator {
     incrementUtilityStat(this.upsertPlayer(player).utilityBought, utility);
   }
 
-  applyPendingUtilityPurchase(player: PlayerRef, utilityBought: UtilityStats): void {
+  applyPendingUtilityPurchase(
+    player: PlayerRef,
+    utilityBought: UtilityStats,
+  ): void {
     const roundPlayerRecord = this.upsertPlayer(player);
 
     for (const utility of Object.keys(utilityBought) as UtilityName[]) {
@@ -172,7 +177,7 @@ export class RoundAccumulator {
     this.derivedWinReason = deriveRoundWinReason({
       winReason: this.winReason,
       bombPlanted: this.bombPlanted,
-      players: this.players,
+      players: [...this.players.values()],
     });
 
     return {
@@ -195,22 +200,10 @@ export class RoundAccumulator {
   }
 
   private upsertPlayer(player: PlayerRef): RoundPlayerRecord {
-    const existing = this.players.get(player.key);
-
-    if (existing) {
-      existing.name = player.name;
-
-      if (player.side) {
-        existing.side = player.side;
-      }
-
-      return existing;
-    }
-
-    const created: RoundPlayerRecord = {
-      id: player.key,
-      name: player.name,
-      side: player.side,
+    return upsertPlayerRecord(this.players, player, (currentPlayer) => ({
+      id: currentPlayer.key,
+      name: currentPlayer.name,
+      side: currentPlayer.side,
       kills: 0,
       deaths: 0,
       assists: 0,
@@ -220,10 +213,7 @@ export class RoundAccumulator {
       headshotKills: 0,
       utilityBought: createEmptyUtilityStats(),
       utilityThrown: createEmptyUtilityStats(),
-    };
-
-    this.players.set(player.key, created);
-    return created;
+    }));
   }
 }
 
@@ -233,85 +223,4 @@ function toRoundPlayerIdentity(player: PlayerRef): RoundPlayerIdentity {
     name: player.name,
     side: player.side,
   };
-}
-
-function deriveRoundWinReason(round: {
-  winReason: RoundWinReason | null;
-  bombPlanted: boolean;
-  players: Map<string, RoundPlayerRecord>;
-}): DerivedRoundWinReason | null {
-  if (round.winReason === "bomb_defused") {
-    return "bomb_defused";
-  }
-
-  if (round.winReason === "bomb_exploded") {
-    return "bomb_exploded";
-  }
-
-  const ctDeaths = countDeathsForSide(round.players, "CT");
-  const tDeaths = countDeathsForSide(round.players, "T");
-  const ctPlayers = countPlayersForSide(round.players, "CT");
-  const tPlayers = countPlayersForSide(round.players, "T");
-  const allCtsDead = ctPlayers > 0 && ctDeaths >= ctPlayers;
-  const allTsDead = tPlayers > 0 && tDeaths >= tPlayers;
-
-  if (round.winReason === "cts_win") {
-    if (allTsDead) {
-      return "team_wipe";
-    }
-
-    if (!round.bombPlanted) {
-      return "time_ran_out";
-    }
-  }
-
-  if (round.winReason === "terrorists_win" && allCtsDead) {
-    return round.bombPlanted ? "post_plant_elimination" : "team_wipe";
-  }
-
-  return null;
-}
-
-function countPlayersForSide(
-  players: Map<string, RoundPlayerRecord>,
-  side: Side,
-): number {
-  let count = 0;
-
-  for (const player of players.values()) {
-    if (player.side === side) {
-      count += 1;
-    }
-  }
-
-  return count;
-}
-
-function countDeathsForSide(
-  players: Map<string, RoundPlayerRecord>,
-  side: Side,
-): number {
-  let count = 0;
-
-  for (const player of players.values()) {
-    if (player.side === side) {
-      count += player.deaths;
-    }
-  }
-
-  return count;
-}
-
-function createEmptyUtilityStats(): UtilityStats {
-  return {
-    flashbang: 0,
-    molotov: 0,
-    incgrenade: 0,
-    smokegrenade: 0,
-    hegrenade: 0,
-  };
-}
-
-function incrementUtilityStat(stats: UtilityStats, utility: UtilityName): void {
-  stats[utility] += 1;
 }

@@ -1,15 +1,23 @@
-import type { PlayerRef, Side, UtilityName } from "../parser-core";
-import type {
-  RoundScore,
-  RoundWinReason,
-} from "../parser-events";
+import type { PlayerRef, UtilityName } from "../parser-core";
+import {
+  calculateAdr,
+  calculateHeadshotPercentage,
+  createEmptyUtilityStats,
+  incrementUtilityStat,
+  resolveOrganizationForSide,
+} from "../parser-derived";
+import type { ParserEvent } from "../parser-events";
 import type {
   BombSite,
   ParsedLogResponse,
+  RoundScore,
   RoundSummary,
+  RoundWinReason,
+  Side,
   UtilityStats,
-} from "../parser-types";
+} from "@/parser-types";
 import { RoundAccumulator } from "./RoundAccumulator";
+import { upsertPlayerRecord } from "./player-records";
 
 type PlayerRecord = {
   id: string;
@@ -53,10 +61,6 @@ export class MatchAccumulator {
     string,
     PendingUtilityPurchaseRecord
   >();
-
-  isRoundLive(): boolean {
-    return this.roundLive;
-  }
 
   recordGameOver(gameOver: {
     mapName: string;
@@ -104,10 +108,7 @@ export class MatchAccumulator {
     return true;
   }
 
-  applyBombPlant(event: {
-    player: PlayerRef;
-    site: BombSite | null;
-  }): boolean {
+  applyBombPlant(event: { player: PlayerRef; site: BombSite | null }): boolean {
     if (!this.currentRound || !isTrackablePlayer(event.player)) {
       return false;
     }
@@ -295,6 +296,63 @@ export class MatchAccumulator {
     return true;
   }
 
+  /**
+   * Applies event based on event type.
+   * Returns boolean to indicate if game is over or is still going
+   */
+  applyEvent(event: ParserEvent, timeStamp: string): boolean {
+    switch (event.type) {
+      case "game_over":
+        this.recordGameOver(event.gameOver);
+        return true;
+      case "rounds_played":
+        this.noteRoundsPlayed(event.roundsPlayed);
+        return false;
+      case "score":
+        this.applyScore(event.score);
+        return false;
+      case "round_end":
+        this.handleRoundEnd(timeStamp);
+        return false;
+      case "round_restart":
+        this.handleRoundRestart(timeStamp);
+        return false;
+      case "round_outcome":
+        this.applyRoundOutcome(event.roundOutcome);
+        return false;
+      case "bomb_plant":
+        this.applyBombPlant(event.bombPlant);
+        return false;
+      case "bomb_defuse":
+        this.applyBombDefuse(event.bombDefuse);
+        return false;
+      case "round_start":
+        this.startRound(timeStamp);
+        return false;
+      case "utility_purchase":
+        this.applyUtilityPurchase(event.utilityPurchase);
+        return false;
+      case "team_playing":
+        this.setTeamPlaying(event.team);
+        return false;
+      case "team_switch":
+        this.applyTeamSwitch(event.teamSwitch);
+        return false;
+      case "attack":
+        this.applyAttack(event.attack);
+        return false;
+      case "utility_throw":
+        this.applyUtilityThrow(event.utilityThrow);
+        return false;
+      case "kill":
+        this.applyKill(event.kill);
+        return false;
+      case "assist":
+        this.applyAssist(event.assist);
+        return false;
+    }
+  }
+
   finish(): ParsedLogResponse {
     if (this.currentRound) {
       this.rounds.push(this.finalizeCurrentRound(null, false));
@@ -306,7 +364,10 @@ export class MatchAccumulator {
 
     const finalizedPlayers = [...this.players.values()].map((player) => ({
       ...player,
-      organization: resolveOrganizationForSide(player.side, this.teamOrganizations),
+      organization: resolveOrganizationForSide(
+        player.side,
+        this.teamOrganizations,
+      ),
       adr: calculateAdr(player.damage, completedRoundsCount),
       headshotPercentage: calculateHeadshotPercentage(
         player.headshotKills,
@@ -372,22 +433,10 @@ function upsertPlayer(
   players: Map<string, PlayerRecord>,
   player: PlayerRef,
 ): PlayerRecord {
-  const existing = players.get(player.key);
-
-  if (existing) {
-    existing.name = player.name;
-
-    if (player.side) {
-      existing.side = player.side;
-    }
-
-    return existing;
-  }
-
-  const created: PlayerRecord = {
-    id: player.key,
-    name: player.name,
-    side: player.side,
+  return upsertPlayerRecord(players, player, (currentPlayer) => ({
+    id: currentPlayer.key,
+    name: currentPlayer.name,
+    side: currentPlayer.side,
     kills: 0,
     deaths: 0,
     assists: 0,
@@ -397,54 +446,11 @@ function upsertPlayer(
     headshotKills: 0,
     utilityBought: createEmptyUtilityStats(),
     utilityThrown: createEmptyUtilityStats(),
-  };
-
-  players.set(player.key, created);
-  return created;
+  }));
 }
 
 function isTrackablePlayer(player: PlayerRef): boolean {
   return player.side !== null;
-}
-
-function resolveOrganizationForSide(
-  side: Side | null,
-  teamOrganizations: TeamOrganizations,
-): string | null {
-  return side ? teamOrganizations[side] : null;
-}
-
-function calculateAdr(damage: number, roundsPlayed: number): number {
-  if (roundsPlayed <= 0) {
-    return 0;
-  }
-
-  return Number((damage / roundsPlayed).toFixed(2));
-}
-
-function calculateHeadshotPercentage(
-  headshotKills: number,
-  kills: number,
-): number {
-  if (kills <= 0) {
-    return 0;
-  }
-
-  return Number(((headshotKills / kills) * 100).toFixed(2));
-}
-
-function createEmptyUtilityStats(): UtilityStats {
-  return {
-    flashbang: 0,
-    molotov: 0,
-    incgrenade: 0,
-    smokegrenade: 0,
-    hegrenade: 0,
-  };
-}
-
-function incrementUtilityStat(stats: UtilityStats, utility: UtilityName): void {
-  stats[utility] += 1;
 }
 
 function bufferPendingUtilityPurchase(
@@ -485,7 +491,10 @@ function applyPendingUtilityPurchases(
 ): void {
   for (const pendingPurchase of pendingPurchases.values()) {
     const playerRecord = upsertPlayer(players, pendingPurchase.player);
-    round.applyPendingUtilityPurchase(toPlayerRef(playerRecord), pendingPurchase.utilityBought);
+    round.applyPendingUtilityPurchase(
+      toPlayerRef(playerRecord),
+      pendingPurchase.utilityBought,
+    );
   }
 
   pendingPurchases.clear();

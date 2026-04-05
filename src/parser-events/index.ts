@@ -6,22 +6,207 @@ import {
   extractQuotedValue,
   normalizeSide,
   normalizeThrownUtilityName,
-  type BombSite,
   type PlayerRef,
-  type Side,
   type UtilityName,
 } from "../parser-core";
+import type {
+  BombSite,
+  RoundScore,
+  RoundWinReason,
+  Side,
+} from "../parser-types";
 
-export type RoundWinReason =
-  | "bomb_defused"
-  | "bomb_exploded"
-  | "cts_win"
-  | "terrorists_win";
+export type { RoundScore, RoundWinReason } from "../parser-types";
 
-export type RoundScore = {
-  CT: number;
-  T: number;
-};
+export type ParserEvent =
+  | {
+      type: "game_over";
+      gameOver: { mapName: string; score: RoundScore; durationMinutes: number };
+    }
+  | { type: "rounds_played"; roundsPlayed: number }
+  | { type: "score"; score: RoundScore }
+  | { type: "round_end" }
+  | { type: "round_restart" }
+  | {
+      type: "round_outcome";
+      roundOutcome: { winningSide: Side | null; reason: RoundWinReason };
+    }
+  | {
+      type: "bomb_plant";
+      bombPlant: { player: PlayerRef; site: BombSite | null };
+    }
+  | { type: "bomb_defuse"; bombDefuse: { player: PlayerRef } }
+  | { type: "round_start" }
+  | {
+      type: "utility_purchase";
+      utilityPurchase: { player: PlayerRef; utility: UtilityName };
+    }
+  | {
+      type: "team_playing";
+      team: { side: Side; organization: string };
+    }
+  | {
+      type: "team_switch";
+      teamSwitch: { player: PlayerRef; toSide: Side };
+    }
+  | {
+      type: "attack";
+      attack: {
+        attacker: PlayerRef;
+        victim: PlayerRef;
+        damage: number;
+        hitgroup: string | null;
+      };
+    }
+  | {
+      type: "utility_throw";
+      utilityThrow: { player: PlayerRef; utility: UtilityName };
+    }
+  | {
+      type: "kill";
+      kill: { killer: PlayerRef; victim: PlayerRef; isHeadshot: boolean };
+    }
+  | {
+      type: "assist";
+      assist: {
+        assister: PlayerRef;
+        victim: PlayerRef;
+        isFlashAssist: boolean;
+      };
+    };
+
+export function recognizeParserEvents(message: string): ParserEvent[] {
+  const events: ParserEvent[] = [];
+
+  const gameOver = extractGameOver(message);
+  if (gameOver) {
+    return [
+      {
+        type: "game_over",
+        gameOver,
+      },
+    ];
+  }
+
+  const roundsPlayed = extractRoundsPlayed(message);
+  if (roundsPlayed !== null) {
+    events.push({
+      type: "rounds_played",
+      roundsPlayed,
+    });
+  }
+
+  const score = extractScore(message);
+  if (score) {
+    events.push({
+      type: "score",
+      score,
+    });
+  }
+
+  const primaryEvent = recognizePrimaryParserEvent(message);
+  if (primaryEvent) {
+    events.push(primaryEvent);
+  }
+
+  return events;
+}
+
+function recognizePrimaryParserEvent(message: string): ParserEvent | null {
+  if (isRoundEnd(message)) {
+    return { type: "round_end" };
+  }
+
+  if (isRoundRestart(message)) {
+    return { type: "round_restart" };
+  }
+
+  const roundOutcome = extractRoundOutcome(message);
+  if (roundOutcome) {
+    return {
+      type: "round_outcome",
+      roundOutcome,
+    };
+  }
+
+  const bombPlant = extractBombPlantEvent(message);
+  if (bombPlant) {
+    return {
+      type: "bomb_plant",
+      bombPlant,
+    };
+  }
+
+  const bombDefuse = extractBombDefuseEvent(message);
+  if (bombDefuse) {
+    return {
+      type: "bomb_defuse",
+      bombDefuse,
+    };
+  }
+
+  if (isRoundStart(message)) {
+    return { type: "round_start" };
+  }
+
+  const utilityPurchase = extractUtilityPurchaseEvent(message);
+  if (utilityPurchase) {
+    return {
+      type: "utility_purchase",
+      utilityPurchase,
+    };
+  }
+
+  const team = extractTeamPlaying(message);
+  if (team) {
+    return {
+      type: "team_playing",
+      team,
+    };
+  }
+
+  const teamSwitch = extractTeamSwitch(message);
+  if (teamSwitch) {
+    return {
+      type: "team_switch",
+      teamSwitch,
+    };
+  }
+
+  const attack = extractAttackEvent(message);
+  if (attack) {
+    return {
+      type: "attack",
+      attack,
+    };
+  }
+
+  const utilityThrow = extractUtilityThrowEvent(message);
+  if (utilityThrow) {
+    return {
+      type: "utility_throw",
+      utilityThrow,
+    };
+  }
+
+  const kill = extractKillEvent(message);
+  if (kill) {
+    return {
+      type: "kill",
+      kill,
+    };
+  }
+
+  const assist = extractAssistEvent(message);
+  if (assist) {
+    return {
+      type: "assist",
+      assist,
+    };
+  }
+
+  return null;
+}
 
 export function extractGameOver(
   message: string,

@@ -1,12 +1,10 @@
+import { Side } from "@/parser-types";
+
 export type ParsedParts = {
   timeStamp: string;
   epochMs: number;
   message: string;
 };
-
-export type Side = "CT" | "T";
-
-export type BombSite = "A" | "B";
 
 export type UtilityName =
   | "flashbang"
@@ -78,7 +76,10 @@ export function parseLineIntoParts(line: string): ParsedParts | null {
   };
 }
 
-export function extractQuotedValue(text: string, marker: string): string | null {
+export function extractQuotedValue(
+  text: string,
+  marker: string,
+): string | null {
   const markerIndex = text.indexOf(marker);
 
   if (markerIndex === -1) {
@@ -100,7 +101,10 @@ export function extractQuotedValue(text: string, marker: string): string | null 
   return text.slice(quoteIndex + 1, closingQuoteIndex);
 }
 
-export function extractQuotedNumber(text: string, marker: string): number | null {
+export function extractQuotedNumber(
+  text: string,
+  marker: string,
+): number | null {
   const value = extractQuotedValue(text, marker);
 
   if (value === null) {

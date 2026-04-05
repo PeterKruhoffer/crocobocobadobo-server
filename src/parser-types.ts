@@ -1,8 +1,17 @@
-import type { BombSite as ParserCoreBombSite, Side } from "./parser-core";
-import type {
-  RoundScore as ParserEventsRoundScore,
-  RoundWinReason as ParserEventsRoundWinReason,
-} from "./parser-events";
+export type Side = "CT" | "T";
+
+export type BombSite = "A" | "B";
+
+export type RoundScore = {
+  CT: number;
+  T: number;
+};
+
+export type RoundWinReason =
+  | "bomb_defused"
+  | "bomb_exploded"
+  | "cts_win"
+  | "terrorists_win";
 
 export type ParsedLogResponse = {
   mapName: string | null;
@@ -70,8 +79,6 @@ export type UtilityStats = {
   hegrenade: number;
 };
 
-export type RoundWinReason = ParserEventsRoundWinReason;
-
 export type DerivedRoundWinReason =
   | "bomb_defused"
   | "bomb_exploded"
@@ -79,12 +86,8 @@ export type DerivedRoundWinReason =
   | "time_ran_out"
   | "post_plant_elimination";
 
-export type BombSite = ParserCoreBombSite;
-
 export type RoundPlayerIdentity = {
   id: string;
   name: string;
   side: Side | null;
 };
-
-export type RoundScore = ParserEventsRoundScore;
