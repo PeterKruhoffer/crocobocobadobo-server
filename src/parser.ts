@@ -1,3 +1,18 @@
+import {
+  convertStringPurchaseToUtilityName,
+  extractNextPlayerToken,
+  extractPlayerTokenAtStart,
+  extractQuotedNumber,
+  extractQuotedValue,
+  normalizeSide,
+  normalizeThrownUtilityName,
+  parseLineIntoParts,
+  type BombSite as ParserCoreBombSite,
+  type PlayerRef,
+  type Side,
+  type UtilityName,
+} from "./parser-core";
+
 export type ParsedLogResponse = {
   mapName: string | null;
   isComplete: boolean;
@@ -77,7 +92,7 @@ export type DerivedRoundWinReason =
   | "time_ran_out"
   | "post_plant_elimination";
 
-export type BombSite = "A" | "B";
+export type BombSite = ParserCoreBombSite;
 
 export type RoundPlayerIdentity = {
   id: string;
@@ -447,87 +462,6 @@ export function parseMatchLog(log: string): ParsedLogResponse | null {
   };
 }
 
-type ParsedParts = {
-  timeStamp: string;
-  epochMs: number;
-  message: string;
-};
-
-/**
- * Parses a line into 3 parts
- * 1. Normalized timestamp eg. 2021-11-28 20:41:48
- * 2. Timestamp in Unix epoch milliseconds, used in later calculations
- * 3. message: what happened in the game at that time (Game event)
- **/
-function parseLineIntoParts(line: string): ParsedParts | null {
-  const dateSeparatorIndex = line.indexOf(" - ");
-
-  if (dateSeparatorIndex === -1) {
-    return null;
-  }
-
-  const messageSeparatorIndex = line.indexOf(": ", dateSeparatorIndex + 11);
-  if (messageSeparatorIndex === -1) {
-    return null;
-  }
-
-  const datePart = line.slice(0, dateSeparatorIndex);
-  const timePart = line.slice(dateSeparatorIndex + 3, messageSeparatorIndex);
-  const message = line.slice(messageSeparatorIndex + 2);
-
-  const datePieces = datePart.split("/");
-  const timePieces = timePart.split(":");
-
-  if (datePieces.length !== 3 || timePieces.length !== 3) {
-    return null;
-  }
-
-  // Since the data is in a stable format we can index safely(99% safe lol) here
-  const month = Number.parseInt(datePieces[0], 10);
-  const day = Number.parseInt(datePieces[1], 10);
-  const year = Number.parseInt(datePieces[2], 10);
-  const hour = Number.parseInt(timePieces[0], 10);
-  const minute = Number.parseInt(timePieces[1], 10);
-  const second = Number.parseInt(timePieces[2], 10);
-
-  if (
-    [month, day, year, hour, minute, second].some((value) =>
-      Number.isNaN(value),
-    )
-  ) {
-    return null;
-  }
-
-  return {
-    timeStamp: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`,
-    epochMs: Date.UTC(year, month - 1, day, hour, minute, second),
-    message,
-  };
-}
-
-function extractQuotedValue(text: string, marker: string): string | null {
-  const markerIndex = text.indexOf(marker);
-
-  if (markerIndex === -1) {
-    return null;
-  }
-
-  const quoteIndex = text.indexOf('"', markerIndex + marker.length);
-
-  if (quoteIndex === -1) {
-    return null;
-  }
-
-  // When we have the first quote we can use that to get the position of the end quote
-  const closingQuoteIndex = text.indexOf('"', quoteIndex + 1);
-
-  if (closingQuoteIndex === -1) {
-    return null;
-  }
-
-  return text.slice(quoteIndex + 1, closingQuoteIndex);
-}
-
 function extractGameOver(
   message: string,
 ): { mapName: string; score: RoundScore; durationMinutes: number } | null {
@@ -664,8 +598,6 @@ function isRoundRestart(message: string): boolean {
   return message.startsWith('World triggered "Restart_Round_');
 }
 
-type Side = "CT" | "T";
-
 function extractTeamPlaying(
   message: string,
 ): { side: Side; organization: string } | null {
@@ -729,13 +661,6 @@ type RoundPlayerRecord = {
   utilityThrown: UtilityStats;
 };
 
-type UtilityName =
-  | "flashbang"
-  | "molotov"
-  | "incgrenade"
-  | "smokegrenade"
-  | "hegrenade";
-
 type PendingUtilityPurchaseRecord = {
   player: PlayerRef;
   utilityBought: UtilityStats;
@@ -757,12 +682,6 @@ type RoundRecord = {
   bombPlantedBy: RoundPlayerIdentity | null;
   bombDefusedBy: RoundPlayerIdentity | null;
   players: Map<string, RoundPlayerRecord>;
-};
-
-type PlayerRef = {
-  key: string;
-  name: string;
-  side: Side | null;
 };
 
 type TeamOrganizations = {
@@ -1074,94 +993,6 @@ function resolveOrganizationForSide(
   return side ? teamOrganizations[side] : null;
 }
 
-type PlayerTokenMatch = {
-  player: PlayerRef;
-  endIndex: number;
-};
-
-function extractPlayerTokenAtStart(text: string): PlayerTokenMatch | null {
-  return extractNextPlayerToken(text, 0);
-}
-
-function extractNextPlayerToken(
-  text: string,
-  startIndex: number,
-): PlayerTokenMatch | null {
-  const quoteIndex = text.indexOf('"', startIndex);
-
-  if (quoteIndex === -1) {
-    return null;
-  }
-
-  const closingQuoteIndex = text.indexOf('"', quoteIndex + 1);
-
-  if (closingQuoteIndex === -1) {
-    return null;
-  }
-
-  const token = text.slice(quoteIndex + 1, closingQuoteIndex);
-  const player = parsePlayerToken(token);
-
-  if (!player) {
-    return null;
-  }
-
-  return {
-    player,
-    endIndex: closingQuoteIndex + 1,
-  };
-}
-
-function parsePlayerToken(token: string): PlayerRef | null {
-  const segments: string[] = [];
-  let cursor = token.length - 1;
-
-  while (cursor >= 0 && token[cursor] === ">") {
-    const openIndex = token.lastIndexOf("<", cursor);
-
-    if (openIndex === -1) {
-      return null;
-    }
-
-    segments.unshift(token.slice(openIndex + 1, cursor));
-    cursor = openIndex - 1;
-
-    if (segments.length === 3) {
-      break;
-    }
-  }
-
-  if (segments.length < 2) {
-    return null;
-  }
-
-  const name = token.slice(0, cursor + 1);
-  const slot = segments[0];
-  const steamId = segments[1];
-  const side = normalizeSide(segments[2] ?? "");
-  const key = steamId && steamId !== "BOT" ? steamId : `${name}:${slot}`;
-
-  return {
-    key,
-    name,
-    side,
-  };
-}
-
-function normalizeSide(value: string): Side | null {
-  const normalized = value.trim().toUpperCase();
-
-  if (normalized === "CT" || normalized === "COUNTER-TERRORIST") {
-    return "CT";
-  }
-
-  if (normalized === "T" || normalized === "TERRORIST") {
-    return "T";
-  }
-
-  return null;
-}
-
 function extractTeamSwitch(
   message: string,
 ): { player: PlayerRef; toSide: Side } | null {
@@ -1354,21 +1185,6 @@ function extractUtilityPurchaseEvent(
   };
 }
 
-function convertStringPurchaseToUtilityName(
-  purchase: string,
-): UtilityName | null {
-  switch (purchase) {
-    case "flashbang":
-    case "molotov":
-    case "hegrenade":
-    case "smokegrenade":
-    case "incgrenade":
-      return purchase;
-    default:
-      return null;
-  }
-}
-
 function extractUtilityThrowEvent(
   message: string,
 ): { player: PlayerRef; utility: UtilityName } | null {
@@ -1405,17 +1221,6 @@ function extractUtilityThrowEvent(
   };
 }
 
-function extractQuotedNumber(text: string, marker: string): number | null {
-  const value = extractQuotedValue(text, marker);
-
-  if (value === null) {
-    return null;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
 function calculateAdr(damage: number, roundsPlayed: number): number {
   if (roundsPlayed <= 0) {
     return 0;
@@ -1447,17 +1252,6 @@ function createEmptyUtilityStats(): UtilityStats {
 
 function incrementUtilityStat(stats: UtilityStats, utility: UtilityName): void {
   stats[utility] += 1;
-}
-
-function normalizeThrownUtilityName(
-  utility: string,
-  side: Side | null,
-): UtilityName | null {
-  if (utility === "molotov" && side === "CT") {
-    return "incgrenade";
-  }
-
-  return convertStringPurchaseToUtilityName(utility);
 }
 
 function bufferPendingUtilityPurchase(
