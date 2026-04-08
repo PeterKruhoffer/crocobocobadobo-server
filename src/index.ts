@@ -96,10 +96,12 @@ app.delete("/matches/report", async (c) => {
   return c.json({ ok: true, cleared: parsedUrl.url.toString() });
 });
 
-app.get("/matches/:url{.+\\.txt}", async (c) => {
-  const url = c.req.param("url");
-  // should validate url at some point - maybe
-
+app.get("/matches", async (c) => {
+  const url = c.req.query("url");
+  if (!url) {
+    console.log("[MATCHES Endpoint]: Url is undefined");
+    return c.json({ error: "No match log found for this url." }, 400);
+  }
   const id = c.env.MATCH_REVIEWER.idFromName("matchreviewer");
   const stub = c.env.MATCH_REVIEWER.get(id);
   const matchLog = await stub.getMatchLog(url);
