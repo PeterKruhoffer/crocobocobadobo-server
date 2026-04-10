@@ -110,7 +110,7 @@ app.get("/matches", async (c) => {
     return c.json({ error: "No imported match log found for this url." }, 404);
   }
 
-  return c.json({ matchLog });
+  return c.json(matchLog);
 });
 
 function validateSourceUrl(
