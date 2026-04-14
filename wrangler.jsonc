@@ -20,9 +20,6 @@
     },
     {
       "tag": "v2",
-      "deleted_classes": [
-        "MatchAnalyzerDurableObject"
-      ]
     },
   ],
   "observability": {

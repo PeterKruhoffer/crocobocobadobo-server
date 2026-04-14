@@ -17,6 +17,8 @@ app.get("/", (c) => {
   });
 });
 
+const NAME_OF_DO = "matchreviewer";
+
 app.get("/matches", async (c) => {
   const url = c.req.query("url");
   if (!url) {
@@ -25,8 +27,8 @@ app.get("/matches", async (c) => {
   }
   // Will always hit the same instance of Durable Object
   // Can be made to be diffrent per match if needed/wanted by making the name diffrent every request
-  // Current usecase i 1 match
-  const id = c.env.MATCH_REVIEWER.idFromName("matchreviewer");
+  // Current usecase is 1 match
+  const id = c.env.MATCH_REVIEWER.idFromName(NAME_OF_DO);
   const stub = c.env.MATCH_REVIEWER.get(id);
   const matchLog = await stub.getMatchLog(url);
 
@@ -35,6 +37,14 @@ app.get("/matches", async (c) => {
   }
 
   return c.json(matchLog);
+});
+
+app.delete("/admin/clear", async (c) => {
+  const id = c.env.MATCH_REVIEWER.idFromName(NAME_OF_DO);
+  const stub = c.env.MATCH_REVIEWER.get(id);
+  await stub.clearDo();
+
+  return c.json({ message: "Data has been cleared" });
 });
 
 export { MatchReviewerDO };
