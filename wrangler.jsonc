@@ -16,6 +16,12 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "MatchReviewerDO"
+      ],
+    },
+    {
+      "tag": "v2",
+      "deleted_classes": [
+        "MatchAnalyzerDurableObject"
       ]
     },
   ],
