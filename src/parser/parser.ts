@@ -1,6 +1,6 @@
 import { parseLineIntoParts } from "./parser-core";
-import { recognizeParserEvents } from "./parser-events";
-import { MatchAccumulator } from "./parser-state/MatchAccumulator";
+import { recognizeParserEvents } from "./parser-event";
+import { MatchAccumulator } from "../parser-state/MatchAccumulator";
 import type { ParsedLogResponse } from "./parser-types";
 
 export type {

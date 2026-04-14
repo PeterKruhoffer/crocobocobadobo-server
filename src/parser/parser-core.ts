@@ -1,4 +1,4 @@
-import { Side } from "@/parser-types";
+import { Side } from "./parser-types";
 
 export type ParsedParts = {
   timeStamp: string;

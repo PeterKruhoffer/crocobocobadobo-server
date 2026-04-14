@@ -1,9 +1,9 @@
-import type { PlayerRef, UtilityName } from "@/parser-core";
+import type { PlayerRef, UtilityName } from "@/parser/parser-core";
 import {
   createEmptyUtilityStats,
   deriveRoundWinReason,
   incrementUtilityStat,
-} from "../parser-derived";
+} from "../parser/parser-derived";
 import type {
   BombSite,
   DerivedRoundWinReason,
@@ -13,7 +13,7 @@ import type {
   RoundWinReason,
   Side,
   UtilityStats,
-} from "@/parser-types";
+} from "@/parser/parser-types";
 import { upsertPlayerRecord } from "./player-records";
 
 type RoundPlayerRecord = {

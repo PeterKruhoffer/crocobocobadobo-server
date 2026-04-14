@@ -1,12 +1,12 @@
-import type { PlayerRef, UtilityName } from "../parser-core";
+import type { PlayerRef, UtilityName } from "../parser/parser-core";
 import {
   calculateAdr,
   calculateHeadshotPercentage,
   createEmptyUtilityStats,
   incrementUtilityStat,
   resolveOrganizationForSide,
-} from "../parser-derived";
-import type { ParserEvent } from "../parser-events";
+} from "../parser/parser-derived";
+import type { ParserEvent } from "../parser/parser-event";
 import type {
   BombSite,
   ParsedLogResponse,
@@ -15,7 +15,7 @@ import type {
   RoundWinReason,
   Side,
   UtilityStats,
-} from "@/parser-types";
+} from "@/parser/parser-types";
 import { RoundAccumulator } from "./RoundAccumulator";
 import { upsertPlayerRecord } from "./player-records";
 

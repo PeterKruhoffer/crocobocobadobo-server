@@ -1,5 +1,5 @@
-import type { PlayerRef } from "@/parser-core";
-import { Side } from "@/parser-types";
+import type { PlayerRef } from "@/parser/parser-core";
+import { Side } from "@/parser/parser-types";
 
 type MutablePlayerRecord = {
   id: string;

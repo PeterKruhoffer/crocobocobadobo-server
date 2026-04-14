@@ -1,10 +1,8 @@
 import { Hono } from "hono";
 
-import { MatchAnalyzerDurableObject } from "./durable-objects/match-analyzer";
 import { MatchReviewerDO } from "./durable-objects/matchReviewerDO";
 
 type AppBindings = {
-  MATCH_ANALYZER: DurableObjectNamespace<MatchAnalyzerDurableObject>;
   MATCH_REVIEWER: DurableObjectNamespace<MatchReviewerDO>;
 };
 
@@ -14,9 +12,7 @@ app.get("/", (c) => {
   return c.json({
     name: "crocobocobadobo",
     endpoints: {
-      importMatchLog: "POST /matches/import",
-      getMatchReport: "GET /matches/report?sourceUrl=...",
-      clearMatchReport: "DELETE /matches/report?sourceUrl=...",
+      getMatchReport: "GET /matches?url=...",
     },
   });
 });
@@ -27,6 +23,9 @@ app.get("/matches", async (c) => {
     console.log("[MATCHES Endpoint]: Url is undefined");
     return c.json({ error: "No match log found for this url." }, 400);
   }
+  // Will always hit the same instance of Durable Object
+  // Can be made to be diffrent per match if needed/wanted by making the name diffrent every request
+  // Current usecase i 1 match
   const id = c.env.MATCH_REVIEWER.idFromName("matchreviewer");
   const stub = c.env.MATCH_REVIEWER.get(id);
   const matchLog = await stub.getMatchLog(url);
@@ -38,6 +37,6 @@ app.get("/matches", async (c) => {
   return c.json(matchLog);
 });
 
-export { MatchAnalyzerDurableObject, MatchReviewerDO };
+export { MatchReviewerDO };
 
 export default app;

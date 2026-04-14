@@ -8,15 +8,13 @@ import {
   normalizeThrownUtilityName,
   type PlayerRef,
   type UtilityName,
-} from "../parser-core";
+} from "./parser-core";
 import type {
   BombSite,
   RoundScore,
   RoundWinReason,
   Side,
-} from "../parser-types";
-
-export type { RoundScore, RoundWinReason } from "../parser-types";
+} from "./parser-types";
 
 export type ParserEvent =
   | {
