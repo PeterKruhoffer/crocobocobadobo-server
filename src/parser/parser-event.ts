@@ -423,6 +423,7 @@ export function extractBombDefuseEvent(
     return null;
   }
 
+  // Make sure this is in fact a defuse event
   const defuseMarker = ' triggered "Defused_The_Bomb"';
   const defuseIndex = message.indexOf(defuseMarker, playerMatch.endIndex);
   if (defuseIndex === -1) {
@@ -443,6 +444,7 @@ export function extractTeamSwitch(
     return null;
   }
 
+  // Make sure this is in fact a team switch event
   const switchMarker = " switched from team <";
   const switchIndex = message.indexOf(switchMarker, playerMatch.endIndex);
 
