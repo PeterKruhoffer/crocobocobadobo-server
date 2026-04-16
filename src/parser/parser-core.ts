@@ -164,6 +164,8 @@ export function parsePlayerToken(token: string): PlayerRef | null {
     segments.unshift(token.slice(openIndex + 1, cursor));
     cursor = openIndex - 1;
 
+    // we break on 3 due to wanting side, steamId and slot
+    // once we have those we are done
     if (segments.length === 3) {
       break;
     }
@@ -173,6 +175,7 @@ export function parsePlayerToken(token: string): PlayerRef | null {
     return null;
   }
 
+  // Extracting slot and using it only for the fallback key might me overkill
   const name = token.slice(0, cursor + 1);
   const slot = segments[0];
   const steamId = segments[1];

@@ -222,6 +222,7 @@ export function extractGameOver(
     return null;
   }
 
+  // In future do this in a less error prone way!
   const [
     matchId,
     mapName,
@@ -399,6 +400,7 @@ export function extractBombPlantEvent(
     return null;
   }
 
+  // Make sure this is in fact a bomb plant event
   const plantMarker = ' triggered "Planted_The_Bomb"';
   const plantIndex = message.indexOf(plantMarker, playerMatch.endIndex);
 
@@ -421,9 +423,15 @@ export function extractBombDefuseEvent(
     return null;
   }
 
-  return message.includes(' triggered "Defused_The_Bomb"')
-    ? { player: playerMatch.player }
-    : null;
+  const defuseMarker = ' triggered "Defused_The_Bomb"';
+  const defuseIndex = message.indexOf(defuseMarker, playerMatch.endIndex);
+  if (defuseIndex === -1) {
+    return null;
+  }
+
+  return {
+    player: playerMatch.player,
+  };
 }
 
 export function extractTeamSwitch(
