@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { ParsedLogResponse, parseMatchLog } from "@/parser/parser";
+import { parseMatchLog } from "@/parser/parser";
+import { ParsedLogResponse } from "@/parser/parser-types";
 
 export class MatchReviewerDO extends DurableObject<CloudflareBindings> {
   sql: SqlStorage;

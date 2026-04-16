@@ -52,8 +52,10 @@ export class RoundAccumulator {
   private bombPlantedBy: RoundPlayerIdentity | null = null;
   private bombDefusedBy: RoundPlayerIdentity | null = null;
 
+  // I know that "roundNumber" as a name is a bit much since this is in the RoundAccumulator class.
+  // But naming it "number" makes it hard to track
   constructor(
-    private readonly number: number,
+    private readonly roundNumber: number,
     private readonly startedAt: string,
   ) {}
 
@@ -181,7 +183,7 @@ export class RoundAccumulator {
     });
 
     return {
-      number: this.number,
+      number: this.roundNumber,
       startedAt: this.startedAt,
       endedAt: this.endedAt,
       isComplete: this.isComplete,

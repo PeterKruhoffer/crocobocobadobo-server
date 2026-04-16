@@ -108,22 +108,22 @@ export class MatchAccumulator {
     return true;
   }
 
-  applyBombPlant(event: { player: PlayerRef; site: BombSite | null }): boolean {
+  applyBombPlant(event: { player: PlayerRef; site: BombSite | null }): void {
     if (!this.currentRound || !isTrackablePlayer(event.player)) {
-      return false;
+      return;
     }
 
     this.currentRound.recordBombPlant(event);
-    return true;
+    return;
   }
 
-  applyBombDefuse(event: { player: PlayerRef }): boolean {
+  applyBombDefuse(event: { player: PlayerRef }): void {
     if (!this.currentRound || !isTrackablePlayer(event.player)) {
-      return false;
+      return;
     }
 
     this.currentRound.recordBombDefuse(event);
-    return true;
+    return;
   }
 
   startRound(startedAt: string): void {
@@ -154,16 +154,13 @@ export class MatchAccumulator {
     );
   }
 
-  applyUtilityPurchase(event: {
-    player: PlayerRef;
-    utility: UtilityName;
-  }): boolean {
+  applyUtilityPurchase(event: { player: PlayerRef; utility: UtilityName }) {
     if (!isTrackablePlayer(event.player)) {
-      return false;
+      return;
     }
 
     if (!this.currentRound && !this.hasLiveMatchStarted) {
-      return true;
+      return;
     }
 
     const playerRecord = upsertPlayer(this.players, event.player);
@@ -178,8 +175,6 @@ export class MatchAccumulator {
         event.utility,
       );
     }
-
-    return true;
   }
 
   setTeamPlaying(team: { side: Side; organization: string }): void {
@@ -196,13 +191,13 @@ export class MatchAccumulator {
     victim: PlayerRef;
     damage: number;
     hitgroup: string | null;
-  }): boolean {
+  }): void {
     if (
       !this.currentRound ||
       !isTrackablePlayer(event.attacker) ||
       !isTrackablePlayer(event.victim)
     ) {
-      return false;
+      return;
     }
 
     const attackerRecord = upsertPlayer(this.players, event.attacker);
@@ -217,34 +212,30 @@ export class MatchAccumulator {
       damage: event.damage,
       hitgroup: event.hitgroup,
     });
-    return true;
   }
 
-  applyUtilityThrow(event: {
-    player: PlayerRef;
-    utility: UtilityName;
-  }): boolean {
+  applyUtilityThrow(event: { player: PlayerRef; utility: UtilityName }): void {
     if (!this.currentRound || !isTrackablePlayer(event.player)) {
-      return false;
+      return;
     }
 
     const playerRecord = upsertPlayer(this.players, event.player);
     incrementUtilityStat(playerRecord.utilityThrown, event.utility);
     this.currentRound.recordUtilityThrow(event.player, event.utility);
-    return true;
+    return;
   }
 
   applyKill(event: {
     killer: PlayerRef;
     victim: PlayerRef;
     isHeadshot: boolean;
-  }): boolean {
+  }): void {
     if (
       !this.currentRound ||
       !isTrackablePlayer(event.killer) ||
       !isTrackablePlayer(event.victim)
     ) {
-      return false;
+      return;
     }
 
     const killerRecord = upsertPlayer(this.players, event.killer);
@@ -257,20 +248,19 @@ export class MatchAccumulator {
     }
 
     this.currentRound.recordKill(event);
-    return true;
   }
 
   applyAssist(event: {
     assister: PlayerRef;
     victim: PlayerRef;
     isFlashAssist: boolean;
-  }): boolean {
+  }): void {
     if (
       !this.currentRound ||
       !isTrackablePlayer(event.assister) ||
       !isTrackablePlayer(event.victim)
     ) {
-      return false;
+      return;
     }
 
     // Dont count same side assists (flashes) in stats
@@ -279,7 +269,7 @@ export class MatchAccumulator {
       event.victim.side &&
       event.assister.side === event.victim.side
     ) {
-      return false;
+      return;
     }
 
     const assisterRecord = upsertPlayer(this.players, event.assister);
@@ -293,7 +283,6 @@ export class MatchAccumulator {
       assister: event.assister,
       isFlashAssist: event.isFlashAssist,
     });
-    return true;
   }
 
   /**
