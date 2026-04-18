@@ -8,15 +8,6 @@ type AppBindings = {
 
 const app = new Hono<{ Bindings: AppBindings }>();
 
-app.get("/", (c) => {
-  return c.json({
-    name: "crocobocobadobo",
-    endpoints: {
-      getMatchReport: "GET /matches?url=...",
-    },
-  });
-});
-
 const NAME_OF_DO = "matchreviewer";
 
 app.get("/matches", async (c) => {
