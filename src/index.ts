@@ -39,7 +39,7 @@ app.get("/matches", async (c) => {
   return c.json(matchLog);
 });
 
-app.delete("/admin/clear", async (c) => {
+app.delete("/clear", async (c) => {
   const id = c.env.MATCH_REVIEWER.idFromName(NAME_OF_DO);
   const stub = c.env.MATCH_REVIEWER.get(id);
   await stub.clearDo();
